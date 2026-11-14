@@ -1,0 +1,11 @@
+PyQt6
+SpeechRecognition
+PyAudio
+pyttsx3
+pywhatkit
+PyMuPDF
+Pillow
+pycaw
+comtypes
+screen-brightness-control
+pyinstaller
