@@ -357,23 +357,37 @@ def clean_step(t):
 
 
 def open_target(name, ctx):
-    name, br = split_browser(clean_name(name))
-    name = BROWSER_ALIASES.get(name, name)
-    browser = br or ctx.get("browser")
+    name, br, prof = split_browser(clean_name(name))
+    name = _normalize_browser_words(name)
+    # 'chrome', 'chrome profile work', 'chrome with john@gmail.com'
+    mb = re.match(r"^%s(?:\s+%s\s+(.+))?$" % (_BR, _PROFILE_WORDS), name)
+    if mb:
+        name = mb.group(1)
+        prof = mb.group(2) or prof
+    browser, pdir, err = browser_choice(br, prof, ctx)
+    if err:
+        return err
     if name in BROWSERS:
         exe = find_browser(name)
         if not exe:
             return (f"{name.capitalize()} is laptop me install nahi mila, isliye kuch nahi khola. "
                     "(Dusra browser jaan-boojh ke nahi kholta.)")
-        subprocess.Popen([exe])
-        ctx["browser"] = name
+        label = ""
+        pdir = None
+        if prof:
+            pdir, label, err = resolve_profile(name, prof)
+            if err:
+                return err
+        args = [exe] + ([f"--profile-directory={pdir}"] if pdir else [])
+        subprocess.Popen(args)
+        ctx["browser"], ctx["profile"] = name, pdir
         ctx["wait"] = True              # give the browser a moment before the next step
-        return f"Opening {name}: {exe}"
+        return f"Opening {name}" + (f" (profile: {label})" if label else "") + f": {exe}"
     if name in SITES:
-        open_url(SITES[name], browser)
+        open_url(SITES[name], browser, pdir)
         return f"Opening {name}"
     if "." in name and " " not in name:
-        open_url(name if name.startswith("http") else "https://" + name, browser)
+        open_url(name if name.startswith("http") else "https://" + name, browser, pdir)
         return f"Opening {name}"
     cmd = APPS.get(name, name)
     if IS_WIN and app_exists(cmd):
@@ -386,7 +400,7 @@ def open_target(name, ctx):
             "(jaise 'open amazon.in') ya 'search ...' bolo.")
 
 
-def play_video(query, browser=None):
+def play_video(query, browser=None, profile_dir=None):
     url = None
     try:
         import pywhatkit
@@ -395,7 +409,7 @@ def play_video(query, browser=None):
         pass
     if not url or not str(url).startswith("http"):
         url = "https://www.youtube.com/results?search_query=" + quote(query)
-    open_url(url, browser)
+    open_url(url, browser, profile_dir)
     return f"Playing {query} on YouTube"
 
 
@@ -1062,11 +1076,19 @@ class Panel(QWidget):
         if msg:
             return log(msg)
 
+        m = re.match(r"^(?:list|show)\s+(?:my\s+)?%s?\s*(?:profiles|accounts)$" % _BR, t)
+        if m:
+            return log("\n".join(describe_profiles(b) for b in ([m.group(1)] if m.group(1) else
+                                                                  ("chrome", "brave", "edge"))))
+
         m = re.match(r"^play\s+(.+)$", t)
         if m:
-            q, br = split_browser(m.group(1))
+            q, br, prof = split_browser(m.group(1))
             q = re.sub(r"\s+on\s+youtube$", "", q)
-            return log(play_video(q, br or ctx.get("browser")))
+            browser, pdir, err = browser_choice(br, prof, ctx)
+            if err:
+                return log(err)
+            return log(play_video(q, browser, pdir))
 
         m = re.match(r"^(?:open|launch|kholo|khol)\s+(.+)$", t) or \
             re.match(r"^(.+?)\s+(?:kholo|khol do|open karo|chalu karo)$", t)
@@ -1101,8 +1123,11 @@ class Panel(QWidget):
 
         m = re.match(r"^(?:search|google)\s+(?:for\s+)?(.+)$", t)
         if m:
-            q, br = split_browser(m.group(1))
-            open_url("https://www.google.com/search?q=" + quote(q), br or ctx.get("browser"))
+            q, br, prof = split_browser(m.group(1))
+            browser, pdir, err = browser_choice(br, prof, ctx)
+            if err:
+                return log(err)
+            open_url("https://www.google.com/search?q=" + quote(q), browser, pdir)
             return log(f"Google search: {q}")
 
         log(f"Samajh nahi aaya: '{t}'\n"
